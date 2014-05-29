@@ -19,6 +19,7 @@ type flowData struct {
 	methodType       string // The method, for our purposes, we just care about GET or POST
 }
 
+// http://patdek.com:8080/upload?flowChunkNumber=2&flowChunkSize=1048576&flowCurrentChunkSize=1048576&flowTotalSize=83157079&flowIdentifier=83157079-NA_A013mp3& flowFilename =NA_A013.mp3 & flowRelativePath =NA_A013.mp3&flowTotalChunks=79
 func UploadHandler(tempDirectory string) (func(http.ResponseWriter, *http.Request), error) {
 	if !directoryExists(tempDirectory) {
 		return nil, errors.New("Invalid Directory")
