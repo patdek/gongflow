@@ -2,10 +2,21 @@ package ngflow
 
 import (
 	"errors"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
+	"time"
+)
+
+var (
+	ErrNoTempDir     = errors.New("ngflow: the temporary directory doesn't exist")
+	ErrCantCreateDir = errors.New("ngflow: can't create a directory under the temp directory")
+	ErrCantWriteFile = errors.New("ngflow: can't write to a file under the temp directory")
+	ErrCantReadFile  = errors.New("ngflow: can't read a file under the temp directory (or got back bad data)")
+	ErrCantDelete    = errors.New("ngflow: can't delete a file/directory under the temp directory")
 )
 
 type flowData struct {
@@ -19,10 +30,15 @@ type flowData struct {
 	methodType       string // The method, for our purposes, we just care about GET or POST
 }
 
-// http://patdek.com:8080/upload?flowChunkNumber=2&flowChunkSize=1048576&flowCurrentChunkSize=1048576&flowTotalSize=83157079&flowIdentifier=83157079-NA_A013mp3& flowFilename =NA_A013.mp3 & flowRelativePath =NA_A013.mp3&flowTotalChunks=79
-func UploadHandler(tempDirectory string) (func(http.ResponseWriter, *http.Request), error) {
-	if !directoryExists(tempDirectory) {
-		return nil, errors.New("Invalid Directory")
+// UploadHandler returns a function built to drop in at to a http.HandleFunc("...", GOES HERE), it closes over
+// some configuration data required to make it work.
+func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.ResponseWriter, *http.Request), error) {
+	err := checkDirectory(tempDirectory)
+	if err != nil {
+		return nil, err
+	}
+	if timeoutMinutes != 0 {
+		go cleanupTemp(timeoutMinutes)
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -31,37 +47,86 @@ func UploadHandler(tempDirectory string) (func(http.ResponseWriter, *http.Reques
 		fd.flowChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
 		if err != nil {
 			http.Error(w, "Bad flowChunkNumber", 500)
+			return
 		}
 		fd.flowTotalChunks, err = strconv.Atoi(r.FormValue("flowTotalChunks"))
 		if err != nil {
 			http.Error(w, "Bad flowTotalChunks", 500)
+			return
 		}
 		fd.flowChunkSize, err = strconv.Atoi(r.FormValue("flowChunkSize"))
 		if err != nil {
 			http.Error(w, "Bad flowChunkSize", 500)
+			return
 		}
 		fd.flowTotalSize, err = strconv.Atoi(r.FormValue("flowTotalSize"))
 		if err != nil {
 			http.Error(w, "Bad flowTotalSize", 500)
+			return
 		}
 		fd.flowIdentifier = r.FormValue("flowIdentifier")
 		if fd.flowIdentifier == "" {
 			http.Error(w, "Bad flowIdentifier", 500)
+			return
 		}
 		fd.flowFilename = r.FormValue("FlowFilename")
 		if fd.flowFilename == "" {
 			http.Error(w, "Bad flowFilename", 500)
+			return
 		}
 		fd.flowRelativePath = r.FormValue("FlowRelativePath")
 		if fd.flowRelativePath == "" {
 			http.Error(w, "Bad flowRelativePath", 500)
+			return
 		}
 		fd.methodType = r.Method
 		if fd.methodType != "POST" && fd.methodType != "GET" {
 			http.Error(w, "Bad method type", 500)
+			return
 		}
 		log.Println(fd.flowIdentifier)
 	}, nil
+}
+
+func checkDirectory(d string) error {
+	if !directoryExists(d) {
+		return ErrNoTempDir
+	}
+
+	testName := "5d58061677944334bb616ba19cec5cc4"
+	testPart := "42"
+	contentName := "foobie"
+	testContent := `For instance, on the planet Earth, man had always assumed that he was more intelligent than 
+	dolphins because he had achieved so much—the wheel, New York, wars and so on—whilst all the dolphins had 
+	ever done was muck about in the water having a good time. But conversely, the dolphins had always believed 
+	that they were far more intelligent than man—for precisely the same reasons.`
+
+	p := path.Join(d, testName, testPart)
+	err := os.MkdirAll(p, 0777)
+	if err != nil {
+		return ErrCantCreateDir
+	}
+
+	f := path.Join(p, contentName)
+	err = ioutil.WriteFile(f, []byte(testContent), 0777)
+	if err != nil {
+		return ErrCantWriteFile
+	}
+
+	b, err := ioutil.ReadFile(f)
+	if err != nil {
+		return ErrCantReadFile
+	}
+	if string(b) != testContent {
+		return ErrCantReadFile
+	}
+
+	err = os.RemoveAll(p)
+	if err != nil {
+		return ErrCantDelete
+	}
+
+	return nil
 }
 
 func directoryExists(d string) bool {
@@ -70,4 +135,11 @@ func directoryExists(d string) bool {
 		return true
 	}
 	return false
+}
+
+func cleanupTemp(timeoutMinutes int) {
+	t := time.NewTicker(time.Duration(timeoutMinutes) * time.Minute)
+	for _ = range t.C {
+		log.Println("Doing cleanup")
+	}
 }
