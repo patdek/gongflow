@@ -2,6 +2,7 @@ package gongflow
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -42,50 +43,95 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		fd := flowData{}
-		fd.flowChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
+
+		fd, err := getFlowData(r)
 		if err != nil {
-			http.Error(w, "Bad flowChunkNumber", 500)
-			return
+			http.Error(w, err.Error(), 500)
 		}
-		fd.flowTotalChunks, err = strconv.Atoi(r.FormValue("flowTotalChunks"))
-		if err != nil {
-			http.Error(w, "Bad flowTotalChunks", 500)
-			return
+
+		tempDir := path.Join(tempDirectory, fd.flowIdentifier)
+		tempFile := path.Join(tempDir, strconv.Itoa(fd.flowChunkNumber))
+
+		if fd.methodType == "GET" {
+			msg, code := statusCheck(tempFile, fd)
+			http.Error(w, msg, code)
+		} else if fd.methodType == "POST" { // upload
+			handlePartUpload(tempDir, tempFile, fd, r)
+
+		} else {
 		}
-		fd.flowChunkSize, err = strconv.Atoi(r.FormValue("flowChunkSize"))
-		if err != nil {
-			http.Error(w, "Bad flowChunkSize", 500)
-			return
-		}
-		fd.flowTotalSize, err = strconv.Atoi(r.FormValue("flowTotalSize"))
-		if err != nil {
-			http.Error(w, "Bad flowTotalSize", 500)
-			return
-		}
-		fd.flowIdentifier = r.FormValue("flowIdentifier")
-		if fd.flowIdentifier == "" {
-			http.Error(w, "Bad flowIdentifier", 500)
-			return
-		}
-		fd.flowFilename = r.FormValue("FlowFilename")
-		if fd.flowFilename == "" {
-			http.Error(w, "Bad flowFilename", 500)
-			return
-		}
-		fd.flowRelativePath = r.FormValue("FlowRelativePath")
-		if fd.flowRelativePath == "" {
-			http.Error(w, "Bad flowRelativePath", 500)
-			return
-		}
-		fd.methodType = r.Method
-		if fd.methodType != "POST" && fd.methodType != "GET" {
-			http.Error(w, "Bad method type", 500)
-			return
-		}
-		log.Println(fd.flowIdentifier)
 	}, nil
+}
+
+func handlePartUpload(tempDir string, tempFile string, fd flowData, r *http.Request) {
+	err := os.MkdirAll(tempDir, 0777)
+	if err != nil {
+		fmt.Println(err)
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		fmt.Println(err)
+	}
+	data, err := ioutil.ReadAll(file)
+	if err != nil {
+		fmt.Println(err)
+	}
+	err = ioutil.WriteFile(tempFile, data, 0777)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func statusCheck(tempFile string, fd flowData) (string, int) {
+	flowChunkNumberString := strconv.Itoa(fd.flowChunkNumber)
+	b, err := ioutil.ReadFile(tempFile)
+	if err != nil {
+		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
+	}
+	if len(b) != fd.flowChunkSize {
+		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 500
+	}
+
+	return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
+
+}
+
+func getFlowData(r *http.Request) (flowData, error) {
+	var err error
+	fd := flowData{}
+	fd.flowChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
+	if err != nil {
+		return fd, errors.New("Bad flowChunkNumber")
+	}
+	fd.flowTotalChunks, err = strconv.Atoi(r.FormValue("flowTotalChunks"))
+	if err != nil {
+		return fd, errors.New("Bad flowTotalChunks")
+	}
+	fd.flowChunkSize, err = strconv.Atoi(r.FormValue("flowChunkSize"))
+	if err != nil {
+		return fd, errors.New("Bad flowChunkSize")
+	}
+	fd.flowTotalSize, err = strconv.Atoi(r.FormValue("flowTotalSize"))
+	if err != nil {
+		return fd, errors.New("Bad flowTotalSize")
+	}
+	fd.flowIdentifier = r.FormValue("flowIdentifier")
+	if fd.flowIdentifier == "" {
+		return fd, errors.New("Bad flowIdentifier")
+	}
+	fd.flowFilename = r.FormValue("flowFilename")
+	if fd.flowFilename == "" {
+		return fd, errors.New("Bad flowFilename")
+	}
+	fd.flowRelativePath = r.FormValue("flowRelativePath")
+	if fd.flowRelativePath == "" {
+		return fd, errors.New("Bad flowRelativePath")
+	}
+	fd.methodType = r.Method
+	if fd.methodType != "POST" && fd.methodType != "GET" {
+		return fd, errors.New("Bad method type")
+	}
+	return fd, nil
 }
 
 func checkDirectory(d string) error {
@@ -118,12 +164,16 @@ func checkDirectory(d string) error {
 		return ErrCantReadFile
 	}
 	if string(b) != testContent {
-		return ErrCantReadFile
+		return ErrCantReadFile // TODO: This should probably be a different error
 	}
 
 	err = os.RemoveAll(p)
 	if err != nil {
 		return ErrCantDelete
+	}
+
+	if os.TempDir() == d {
+		log.Println("You should really have a directory just for upload temp (different from system temp).  It is OK, but consider making a subdirectory for it.")
 	}
 
 	return nil
