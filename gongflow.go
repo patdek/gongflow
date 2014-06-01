@@ -2,7 +2,6 @@ package gongflow
 
 import (
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -43,7 +42,6 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-
 		fd, err := getFlowData(r)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -58,10 +56,60 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 		} else if fd.methodType == "POST" { // upload
 			msg, code := handlePartUpload(tempDir, tempFile, fd, r)
 			http.Error(w, msg, code)
+			if isDone(tempDir, fd) {
+				combineParts(tempDir, fd)
+			}
 		} else {
 			http.Error(w, "Hmph, no clue how we got here", 500)
 		}
 	}, nil
+}
+
+func combineParts(tempDir string, fd flowData) {
+	combinedName := path.Join(tempDir, fd.flowFilename)
+	cn, err := os.OpenFile(combinedName, os.O_RDWR|os.O_APPEND, 0660)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer cn.Close()
+
+	files, err := ioutil.ReadDir(tempDir)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	for _, f := range files {
+		fl := path.Join(tempDir, f.Name())
+		log.Println(fl)
+		dat, err := ioutil.ReadFile(fl)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		cn.Write(dat)
+	}
+}
+
+func isDone(tempDir string, fd flowData) bool {
+	files, err := ioutil.ReadDir(tempDir)
+	if err != nil {
+		log.Println(err)
+	}
+	totalSize := int64(0)
+	for _, f := range files {
+		log.Println(f)
+		fi, err := os.Stat(path.Join(tempDir, f.Name()))
+		if err != nil {
+			log.Println(err)
+		}
+		log.Println(fi)
+		totalSize += fi.Size()
+	}
+	if totalSize == int64(fd.flowTotalSize) {
+		return true
+	}
+	return false
 }
 
 func handlePartUpload(tempDir string, tempFile string, fd flowData, r *http.Request) (string, int) {
@@ -75,27 +123,23 @@ func handlePartUpload(tempDir string, tempFile string, fd flowData, r *http.Requ
 	}
 	data, err := ioutil.ReadAll(file)
 	if err != nil {
-		return "Can't access file", 500
+		return "Can't read file field", 500
 	}
 	err = ioutil.WriteFile(tempFile, data, 0777)
 	if err != nil {
-		fmt.Println(err)
+		return "Can't write file", 500
 	}
-	return "Parts Put Together", 200
+	return "Good Part", 200
 }
 
 func statusCheck(tempFile string, fd flowData) (string, int) {
 	flowChunkNumberString := strconv.Itoa(fd.flowChunkNumber)
-	b, err := ioutil.ReadFile(tempFile)
+	_, err := ioutil.ReadFile(tempFile)
 	if err != nil {
 		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
 	}
-	if len(b) != fd.flowChunkSize {
-		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 500
-	}
 
 	return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
-
 }
 
 func getFlowData(r *http.Request) (flowData, error) {
