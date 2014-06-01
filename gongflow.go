@@ -92,7 +92,9 @@ func combineParts(tempDir string, fd flowData, cb completionCallback) {
 		if err != nil {
 			log.Println(err)
 		}
-		os.Remove(fl)
+		if fl != combinedName {
+			os.Remove(fl)
+		}
 	}
 	cb(combinedName)
 }
