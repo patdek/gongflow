@@ -107,7 +107,6 @@ func isDone(tempDir string, fd flowData) bool {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Println(fi)
 		totalSize += fi.Size()
 	}
 	if totalSize == int64(fd.flowTotalSize) {
@@ -240,6 +239,7 @@ func directoryExists(d string) bool {
 func cleanupTemp(timeoutMinutes int) {
 	t := time.NewTicker(time.Duration(timeoutMinutes) * time.Minute)
 	for _ = range t.C {
+		// TODO: Actually cleanup
 		log.Println("Doing cleanup")
 	}
 }
