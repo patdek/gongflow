@@ -12,91 +12,98 @@ import (
 )
 
 var (
-	ErrNoTempDir     = errors.New("gongflow: the temporary directory doesn't exist")
-	ErrCantCreateDir = errors.New("gongflow: can't create a directory under the temp directory")
-	ErrCantWriteFile = errors.New("gongflow: can't write to a file under the temp directory")
-	ErrCantReadFile  = errors.New("gongflow: can't read a file under the temp directory (or got back bad data)")
-	ErrCantDelete    = errors.New("gongflow: can't delete a file/directory under the temp directory")
+	alreadyCheckedDirectory         = false
+	lastCheckedDirectoryError error = nil
+	ErrNoTempDir                    = errors.New("gongflow: the temporary directory doesn't exist")
+	ErrCantCreateDir                = errors.New("gongflow: can't create a directory under the temp directory")
+	ErrCantWriteFile                = errors.New("gongflow: can't write to a file under the temp directory")
+	ErrCantReadFile                 = errors.New("gongflow: can't read a file under the temp directory (or got back bad data)")
+	ErrCantDelete                   = errors.New("gongflow: can't delete a file/directory under the temp directory")
 )
-
-type completionCallback func(string)
 
 type flowData struct {
 	flowChunkNumber  int    // The index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
 	flowTotalChunks  int    // The total number of chunks.
-	flowChunkSize    int    // The general chunk size. Using this value and flowTotalSize you can calculate the total number of chunks. Please note that the size of the data received in the HTTP might be lower than flowChunkSize of this for the last chunk for a file.
+	flowChunkSize    int    // The general chunk size. Using this value and flowTotalSize you can calculate the total number of chunks.
 	flowTotalSize    int    // The total file size.
 	flowIdentifier   string // A unique identifier for the file contained in the request.
 	flowFilename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multipart posts).
 	flowRelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
-	methodType       string // The method, for our purposes, we just care about GET or POST
 }
 
-// UploadHandler returns a function built to drop in at to a http.HandleFunc("...", GOES HERE), it closes over
-// some configuration data required to make it work.
-func UploadHandler(tempDirectory string, timeoutMinutes int, cb completionCallback) (func(http.ResponseWriter, *http.Request), error) {
+func buildPathParts(tempDirectory string, fd flowData) (string, string) {
+	id := path.Join(tempDirectory, fd.flowIdentifier)
+	chunk := path.Join(tempDirectory, strconv.Itoa(fd.flowChunkNumber))
+	return id, chunk
+}
+
+// HandlePart is called to deal with uploads from ng-flow.  It returns
+// name of file
+func UploadPart(tempDirectory string, fd flowData, r *http.Request) (string, bool, error) {
 	err := checkDirectory(tempDirectory)
 	if err != nil {
-		return nil, err
+		return "", false, err
 	}
-	if timeoutMinutes != 0 {
-		go cleanupTemp(timeoutMinutes)
-	}
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		fd, err := getFlowData(r)
+	id, chunk := buildPathParts(tempDirectory, fd)
+	msg, code := handlePartUpload(id, chunk, fd, r)
+	log.Println(msg)
+	if code == 200 && isDone(tempDirectory, fd) {
+		file, err := combineParts(tempDirectory, fd)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			return "", false, err
 		}
-
-		tempDir := path.Join(tempDirectory, fd.flowIdentifier)
-		tempFile := path.Join(tempDir, strconv.Itoa(fd.flowChunkNumber))
-
-		if fd.methodType == "GET" {
-			msg, code := statusCheck(tempFile, fd)
-			http.Error(w, msg, code)
-		} else if fd.methodType == "POST" { // upload
-			msg, code := handlePartUpload(tempDir, tempFile, fd, r)
-			http.Error(w, msg, code)
-			if isDone(tempDir, fd) {
-				combineParts(tempDir, fd, cb)
-			}
-		} else {
-			http.Error(w, "Hmph, no clue how we got here", 500)
-		}
-	}, nil
+		return file, true, nil
+	}
+	return "", false, nil
 }
 
-func combineParts(tempDir string, fd flowData, cb completionCallback) {
+func CheckPart(tempDirectory string, fd flowData) (string, int) {
+	err := checkDirectory(tempDirectory)
+	if err != nil {
+		return "Directory is broken: " + err.Error(), 500
+	}
+	_, chunk := buildPathParts(tempDirectory, fd)
+	flowChunkNumberString := strconv.Itoa(fd.flowChunkNumber)
+	dat, err := ioutil.ReadFile(chunk)
+	if err != nil {
+		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
+	}
+	// first part is an exception for large last chunks, according to ng-flow the last chunk can be anywhere less
+	// than 2x the chunk size unless you haave forceChunkSize on... seems like idiocy to me, but alright.
+	if fd.flowChunkNumber != fd.flowTotalChunks && fd.flowChunkSize != len(dat) {
+		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 404
+	}
+
+	return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
+}
+
+func combineParts(tempDir string, fd flowData) (string, error) {
 	combinedName := path.Join(tempDir, fd.flowFilename)
 	cn, err := os.Create(combinedName)
 	if err != nil {
-		log.Println(err)
-		return
+		return "", err
 	}
 	defer cn.Close()
 
 	files, err := ioutil.ReadDir(tempDir)
 	if err != nil {
-		log.Println(err)
-		return
+		return "", err
 	}
 	for _, f := range files {
 		fl := path.Join(tempDir, f.Name())
 		dat, err := ioutil.ReadFile(fl)
 		if err != nil {
-			log.Println(err)
-			return
+			return "", err
 		}
 		_, err = cn.Write(dat)
 		if err != nil {
-			log.Println(err)
+			return "", err
 		}
 		if fl != combinedName {
 			os.Remove(fl)
 		}
 	}
-	cb(combinedName)
+	return combinedName, nil
 }
 
 func isDone(tempDir string, fd flowData) bool {
@@ -138,17 +145,7 @@ func handlePartUpload(tempDir string, tempFile string, fd flowData, r *http.Requ
 	return "Good Part", 200
 }
 
-func statusCheck(tempFile string, fd flowData) (string, int) {
-	flowChunkNumberString := strconv.Itoa(fd.flowChunkNumber)
-	_, err := ioutil.ReadFile(tempFile)
-	if err != nil {
-		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
-	}
-
-	return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
-}
-
-func getFlowData(r *http.Request) (flowData, error) {
+func ExtractFlowData(r *http.Request) (flowData, error) {
 	var err error
 	fd := flowData{}
 	fd.flowChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
@@ -179,16 +176,19 @@ func getFlowData(r *http.Request) (flowData, error) {
 	if fd.flowRelativePath == "" {
 		return fd, errors.New("Bad flowRelativePath")
 	}
-	fd.methodType = r.Method
-	if fd.methodType != "POST" && fd.methodType != "GET" {
-		return fd, errors.New("Bad method type")
-	}
 	return fd, nil
 }
 
 func checkDirectory(d string) error {
+	if alreadyCheckedDirectory {
+		return lastCheckedDirectoryError
+	}
+
+	alreadyCheckedDirectory = true
+
 	if !directoryExists(d) {
-		return ErrNoTempDir
+		lastCheckedDirectoryError = ErrNoTempDir
+		return lastCheckedDirectoryError
 	}
 
 	testName := "5d58061677944334bb616ba19cec5cc4"
@@ -202,26 +202,31 @@ func checkDirectory(d string) error {
 	p := path.Join(d, testName, testPart)
 	err := os.MkdirAll(p, 0777)
 	if err != nil {
-		return ErrCantCreateDir
+		lastCheckedDirectoryError = ErrCantCreateDir
+		return lastCheckedDirectoryError
 	}
 
 	f := path.Join(p, contentName)
 	err = ioutil.WriteFile(f, []byte(testContent), 0777)
 	if err != nil {
-		return ErrCantWriteFile
+		lastCheckedDirectoryError = ErrCantWriteFile
+		return lastCheckedDirectoryError
 	}
 
 	b, err := ioutil.ReadFile(f)
 	if err != nil {
-		return ErrCantReadFile
+		lastCheckedDirectoryError = ErrCantReadFile
+		return lastCheckedDirectoryError
 	}
 	if string(b) != testContent {
-		return ErrCantReadFile // TODO: This should probably be a different error
+		lastCheckedDirectoryError = ErrCantReadFile // TODO: This should probably be a different error
+		return lastCheckedDirectoryError
 	}
 
 	err = os.RemoveAll(p)
 	if err != nil {
-		return ErrCantDelete
+		lastCheckedDirectoryError = ErrCantDelete
+		return lastCheckedDirectoryError
 	}
 
 	if os.TempDir() == d {
