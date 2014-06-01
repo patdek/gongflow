@@ -67,7 +67,7 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 
 func combineParts(tempDir string, fd flowData) {
 	combinedName := path.Join(tempDir, fd.flowFilename)
-	cn, err := os.OpenFile(combinedName, os.O_RDWR|os.O_APPEND, 0660)
+	cn, err := os.Create(combinedName)
 	if err != nil {
 		log.Println(err)
 		return
@@ -87,8 +87,12 @@ func combineParts(tempDir string, fd flowData) {
 			log.Println(err)
 			return
 		}
-		cn.Write(dat)
+		_, err = cn.Write(dat)
+		if err != nil {
+			os.Remove(fl)
+		}
 	}
+	// callback to combinedName goes here
 }
 
 func isDone(tempDir string, fd flowData) bool {
