@@ -19,6 +19,8 @@ var (
 	ErrCantDelete    = errors.New("gongflow: can't delete a file/directory under the temp directory")
 )
 
+type completionCallback func(string)
+
 type flowData struct {
 	flowChunkNumber  int    // The index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
 	flowTotalChunks  int    // The total number of chunks.
@@ -32,7 +34,7 @@ type flowData struct {
 
 // UploadHandler returns a function built to drop in at to a http.HandleFunc("...", GOES HERE), it closes over
 // some configuration data required to make it work.
-func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.ResponseWriter, *http.Request), error) {
+func UploadHandler(tempDirectory string, timeoutMinutes int, cb completionCallback) (func(http.ResponseWriter, *http.Request), error) {
 	err := checkDirectory(tempDirectory)
 	if err != nil {
 		return nil, err
@@ -57,7 +59,7 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 			msg, code := handlePartUpload(tempDir, tempFile, fd, r)
 			http.Error(w, msg, code)
 			if isDone(tempDir, fd) {
-				combineParts(tempDir, fd)
+				combineParts(tempDir, fd, cb)
 			}
 		} else {
 			http.Error(w, "Hmph, no clue how we got here", 500)
@@ -65,7 +67,7 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 	}, nil
 }
 
-func combineParts(tempDir string, fd flowData) {
+func combineParts(tempDir string, fd flowData, cb completionCallback) {
 	combinedName := path.Join(tempDir, fd.flowFilename)
 	cn, err := os.Create(combinedName)
 	if err != nil {
@@ -81,7 +83,6 @@ func combineParts(tempDir string, fd flowData) {
 	}
 	for _, f := range files {
 		fl := path.Join(tempDir, f.Name())
-		log.Println(fl)
 		dat, err := ioutil.ReadFile(fl)
 		if err != nil {
 			log.Println(err)
@@ -92,7 +93,7 @@ func combineParts(tempDir string, fd flowData) {
 			os.Remove(fl)
 		}
 	}
-	// callback to combinedName goes here
+	cb(combinedName)
 }
 
 func isDone(tempDir string, fd flowData) bool {
@@ -102,7 +103,6 @@ func isDone(tempDir string, fd flowData) bool {
 	}
 	totalSize := int64(0)
 	for _, f := range files {
-		log.Println(f)
 		fi, err := os.Stat(path.Join(tempDir, f.Name()))
 		if err != nil {
 			log.Println(err)
