@@ -56,30 +56,32 @@ func UploadHandler(tempDirectory string, timeoutMinutes int) (func(http.Response
 			msg, code := statusCheck(tempFile, fd)
 			http.Error(w, msg, code)
 		} else if fd.methodType == "POST" { // upload
-			handlePartUpload(tempDir, tempFile, fd, r)
-
+			msg, code := handlePartUpload(tempDir, tempFile, fd, r)
+			http.Error(w, msg, code)
 		} else {
+			http.Error(w, "Hmph, no clue how we got here", 500)
 		}
 	}, nil
 }
 
-func handlePartUpload(tempDir string, tempFile string, fd flowData, r *http.Request) {
+func handlePartUpload(tempDir string, tempFile string, fd flowData, r *http.Request) (string, int) {
 	err := os.MkdirAll(tempDir, 0777)
 	if err != nil {
-		fmt.Println(err)
+		return "Bad directory", 500
 	}
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println(err)
+		return "Can't access file field", 500
 	}
 	data, err := ioutil.ReadAll(file)
 	if err != nil {
-		fmt.Println(err)
+		return "Can't access file", 500
 	}
 	err = ioutil.WriteFile(tempFile, data, 0777)
 	if err != nil {
 		fmt.Println(err)
 	}
+	return "Parts Put Together", 200
 }
 
 func statusCheck(tempFile string, fd flowData) (string, int) {
