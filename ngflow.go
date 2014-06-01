@@ -1,4 +1,4 @@
-package ngflow
+package gongflow
 
 import (
 	"errors"
@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	ErrNoTempDir     = errors.New("ngflow: the temporary directory doesn't exist")
-	ErrCantCreateDir = errors.New("ngflow: can't create a directory under the temp directory")
-	ErrCantWriteFile = errors.New("ngflow: can't write to a file under the temp directory")
-	ErrCantReadFile  = errors.New("ngflow: can't read a file under the temp directory (or got back bad data)")
-	ErrCantDelete    = errors.New("ngflow: can't delete a file/directory under the temp directory")
+	ErrNoTempDir     = errors.New("gongflow: the temporary directory doesn't exist")
+	ErrCantCreateDir = errors.New("gongflow: can't create a directory under the temp directory")
+	ErrCantWriteFile = errors.New("gongflow: can't write to a file under the temp directory")
+	ErrCantReadFile  = errors.New("gongflow: can't read a file under the temp directory (or got back bad data)")
+	ErrCantDelete    = errors.New("gongflow: can't delete a file/directory under the temp directory")
 )
 
 type flowData struct {
