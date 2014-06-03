@@ -1,3 +1,4 @@
+// Package gongflow provides server support for ng-flow (https://github.com/flowjs/ng-flow)
 package gongflow
 
 import (
@@ -12,51 +13,48 @@ import (
 )
 
 var (
-	alreadyCheckedDirectory         = false
-	lastCheckedDirectoryError error = nil
 	ErrNoTempDir                    = errors.New("gongflow: the temporary directory doesn't exist")
 	ErrCantCreateDir                = errors.New("gongflow: can't create a directory under the temp directory")
 	ErrCantWriteFile                = errors.New("gongflow: can't write to a file under the temp directory")
 	ErrCantReadFile                 = errors.New("gongflow: can't read a file under the temp directory (or got back bad data)")
 	ErrCantDelete                   = errors.New("gongflow: can't delete a file/directory under the temp directory")
+	alreadyCheckedDirectory         = false
+	lastCheckedDirectoryError error = nil
 )
 
 type flowData struct {
 	flowChunkNumber  int    // The index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
 	flowTotalChunks  int    // The total number of chunks.
-	flowChunkSize    int    // The general chunk size. Using this value and flowTotalSize you can calculate the total number of chunks.
+	flowChunkSize    int    // The general chunk size. Using this value and flowTotalSize you can calculate the total number of chunks. The "final chunk" can be anything less than 2x chunk size.
 	flowTotalSize    int    // The total file size.
 	flowIdentifier   string // A unique identifier for the file contained in the request.
 	flowFilename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multipart posts).
 	flowRelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
 }
 
-func buildPathParts(tempDirectory string, fd flowData) (string, string) {
-	id := path.Join(tempDirectory, fd.flowIdentifier)
-	chunk := path.Join(tempDirectory, strconv.Itoa(fd.flowChunkNumber))
-	return id, chunk
-}
-
-// HandlePart is called to deal with uploads from ng-flow.  It returns
-// name of file
-func UploadPart(tempDirectory string, fd flowData, r *http.Request) (string, bool, error) {
+// UploadPart is used to handle a POST from ng-flow, it will return an empty string for part upload (incomplete) and when
+// all the parts have been uploaded, it will return the path to the reconstituded file.  So, you can just keep calling it
+// until you get back the path to a file.
+func UploadPart(tempDirectory string, fd flowData, r *http.Request) (string, error) {
 	err := checkDirectory(tempDirectory)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	id, chunk := buildPathParts(tempDirectory, fd)
 	msg, code := handlePartUpload(id, chunk, fd, r)
-	log.Println(msg)
+	log.Println(msg, " ugh ", code)
 	if code == 200 && isDone(tempDirectory, fd) {
 		file, err := combineParts(tempDirectory, fd)
 		if err != nil {
-			return "", false, err
+			return "", err
 		}
-		return file, true, nil
+		return file, nil
 	}
-	return "", false, nil
+	return "", nil
 }
 
+// CheckPart is used to handle a GET from ng-flow, it will return a (message, 200) for when it already has a part, and it
+// will return a (message, 404 | 500) when a part is incomplete or not started.
 func CheckPart(tempDirectory string, fd flowData) (string, int) {
 	err := checkDirectory(tempDirectory)
 	if err != nil {
@@ -68,13 +66,38 @@ func CheckPart(tempDirectory string, fd flowData) (string, int) {
 	if err != nil {
 		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
 	}
-	// first part is an exception for large last chunks, according to ng-flow the last chunk can be anywhere less
+	// An exception for large last chunks, according to ng-flow the last chunk can be anywhere less
 	// than 2x the chunk size unless you haave forceChunkSize on... seems like idiocy to me, but alright.
 	if fd.flowChunkNumber != fd.flowTotalChunks && fd.flowChunkSize != len(dat) {
 		return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 404
 	}
 
 	return "The part " + fd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
+}
+
+// CleanupParts is used to go through the tempDirectory and remove any parts and directories older than
+// the time.Duration passed
+func CleanupParts(tempDirectory string, timeoutDur time.Duration) error {
+	files, err := ioutil.ReadDir(tempDirectory)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		fl := path.Join(tempDirectory, f.Name())
+		finfo, err := os.Stat(fl)
+		if err != nil {
+			return err
+		}
+
+		log.Println(time.Now().Sub(finfo.ModTime()))
+	}
+	return nil
+}
+
+func buildPathParts(tempDirectory string, fd flowData) (string, string) {
+	id := path.Join(tempDirectory, fd.flowIdentifier)
+	chunk := path.Join(id, strconv.Itoa(fd.flowChunkNumber))
+	return id, chunk
 }
 
 func combineParts(tempDir string, fd flowData) (string, error) {
@@ -107,19 +130,21 @@ func combineParts(tempDir string, fd flowData) (string, error) {
 }
 
 func isDone(tempDir string, fd flowData) bool {
-	files, err := ioutil.ReadDir(tempDir)
+	files, err := ioutil.ReadDir(path.Join(tempDir, fd.flowIdentifier))
 	if err != nil {
 		log.Println(err)
 	}
 	totalSize := int64(0)
 	for _, f := range files {
 		fi, err := os.Stat(path.Join(tempDir, f.Name()))
+		log.Println(fi.Name())
 		if err != nil {
 			log.Println(err)
 		}
 		totalSize += fi.Size()
 	}
-	if totalSize == int64(fd.flowTotalSize) {
+	log.Println(totalSize, ">=", fd.flowTotalSize)
+	if totalSize >= int64(fd.flowTotalSize) {
 		return true
 	}
 	return false
@@ -223,7 +248,7 @@ func checkDirectory(d string) error {
 		return lastCheckedDirectoryError
 	}
 
-	err = os.RemoveAll(p)
+	err = os.RemoveAll(path.Join(d, testName))
 	if err != nil {
 		lastCheckedDirectoryError = ErrCantDelete
 		return lastCheckedDirectoryError
@@ -242,12 +267,4 @@ func directoryExists(d string) bool {
 		return true
 	}
 	return false
-}
-
-func cleanupTemp(timeoutMinutes int) {
-	t := time.NewTicker(time.Duration(timeoutMinutes) * time.Minute)
-	for _ = range t.C {
-		// TODO: Actually cleanup
-		log.Println("Doing cleanup")
-	}
 }
