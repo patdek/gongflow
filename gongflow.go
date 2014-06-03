@@ -81,9 +81,12 @@ func PartUpload(tempDir string, ngfd NgFlowData, r *http.Request) (string, error
 		return "", err
 	}
 	fileDir, chunkFile := buildPathParts(tempDir, ngfd)
-	_, code := storePart(fileDir, chunkFile, ngfd, r)
-	if code == 200 && allPartsUploaded(tempDir, ngfd) {
-		file, err := combineParts(tempDir, ngfd)
+	err = storePart(fileDir, chunkFile, ngfd, r)
+	if err != nil {
+		return "", errors.New("Unable to store part" + err.Error())
+	}
+	if allPartsUploaded(tempDir, ngfd) {
+		file, err := combineParts(fileDir, ngfd)
 		if err != nil {
 			return "", err
 		}
@@ -115,7 +118,7 @@ func PartStatus(tempDir string, ngfd NgFlowData) (string, int) {
 }
 
 // PartsCleanup is used to go through the tempDir and remove any parts and directories older than
-// than the timeoutDur
+// than the timeoutDur, best to set this VERY conservatively.
 func PartsCleanup(tempDir string, timeoutDur time.Duration) error {
 	files, err := ioutil.ReadDir(tempDir)
 	if err != nil {
@@ -130,6 +133,12 @@ func PartsCleanup(tempDir string, timeoutDur time.Duration) error {
 
 		log.Println(f.Name())
 		log.Println(time.Now().Sub(finfo.ModTime()))
+		if time.Now().Sub(finfo.ModTime()) > timeoutDur {
+			err = os.RemoveAll(fl)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -143,8 +152,7 @@ func buildPathParts(tempDir string, ngfd NgFlowData) (string, string) {
 
 // combineParts will take the chunks uploaded, and combined them into a single file with the
 // name as uploaded from the NgFlowData, and it will clean up the parts as it goes.
-func combineParts(tempDir string, ngfd NgFlowData) (string, error) {
-	fileDir, _ := buildPathParts(tempDir, ngfd)
+func combineParts(fileDir string, ngfd NgFlowData) (string, error) {
 	combinedName := path.Join(fileDir, ngfd.flowFilename)
 	cn, err := os.Create(combinedName)
 	if err != nil {
@@ -152,12 +160,12 @@ func combineParts(tempDir string, ngfd NgFlowData) (string, error) {
 	}
 	defer cn.Close()
 
-	files, err := ioutil.ReadDir(tempDir)
+	files, err := ioutil.ReadDir(fileDir)
 	if err != nil {
 		return "", err
 	}
 	for _, f := range files {
-		fl := path.Join(tempDir, f.Name())
+		fl := path.Join(fileDir, f.Name())
 		dat, err := ioutil.ReadFile(fl)
 		if err != nil {
 			return "", err
@@ -166,7 +174,7 @@ func combineParts(tempDir string, ngfd NgFlowData) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if fl != combinedName {
+		if fl != combinedName { // we don't want to delete the file we just created
 			err = os.Remove(fl)
 			if err != nil {
 				return "", err
@@ -198,24 +206,24 @@ func allPartsUploaded(tempDir string, ngfd NgFlowData) bool {
 }
 
 // storePart puts the part in the request into the right place on disk
-func storePart(tempDir string, tempFile string, ngfd NgFlowData, r *http.Request) (string, int) {
+func storePart(tempDir string, tempFile string, ngfd NgFlowData, r *http.Request) error {
 	err := os.MkdirAll(tempDir, DefaultDirPermissions)
 	if err != nil {
-		return "Bad directory", 500
+		return errors.New("Bad directory")
 	}
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		return "Can't access file field", 500
+		return errors.New("Can't access file field")
 	}
 	data, err := ioutil.ReadAll(file)
 	if err != nil {
-		return "Can't read file field", 500
+		return errors.New("Can't read file")
 	}
 	err = ioutil.WriteFile(tempFile, data, DefaultDirPermissions)
 	if err != nil {
-		return "Can't write file", 500
+		return errors.New("Can't write file")
 	}
-	return "Good Part", 200
+	return nil
 }
 
 // checkDirectory makes sure that we have all the needed permissions to the temp directory to
