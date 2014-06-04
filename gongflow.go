@@ -74,7 +74,7 @@ func PartFlowData(r *http.Request) (NgFlowData, error) {
 }
 
 // PartUpload is used to handle a POST from ng-flow, it will return an empty string for part upload (incomplete) and when
-// all the parts have been uploaded, it will return the path to the reconstituded file.  So, you can just keep calling it
+// all the parts have been uploaded, it will return the path to the reconstituted file.  So, you can just keep calling it
 // until you get back the path to a file.
 func PartUpload(tempDir string, ngfd NgFlowData, r *http.Request) (string, error) {
 	err := checkDirectory(tempDir)
