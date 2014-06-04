@@ -1,5 +1,5 @@
 // Package gongflow provides server support for ng-flow (https://github.com/flowjs/ng-flow).  If you want a way to instantly
-// test it out, grab the gongflow-demo package: http://godoc.org/github.com/patdek/gongflow
+// test it out, grab the gongflow-demo package: http://godoc.org/github.com/patdek/gongflow-demo
 package gongflow
 
 import (
