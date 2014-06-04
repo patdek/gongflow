@@ -35,6 +35,7 @@ type NgFlowData struct {
 	flowIdentifier   string // A unique identifier for the file contained in the request.
 	flowFilename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multichunk posts).
 	flowRelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
+
 }
 
 // ChunkFlowData does exactly what it says on the tin, it extracts all the flow data from a request object and puts
@@ -289,6 +290,7 @@ func checkDirectory(d string) error {
 // directoryExists checks if the directory exists of course!
 func directoryExists(d string) bool {
 	finfo, err := os.Stat(d)
+
 	if err == nil && finfo.IsDir() {
 		return true
 	}
