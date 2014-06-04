@@ -33,13 +33,13 @@ type NgFlowData struct {
 	flowChunkSize    int    // The general chunk size. Using this value and flowTotalSize you can calculate the total number of chunks. The "final chunk" can be anything less than 2x chunk size.
 	flowTotalSize    int    // The total file size.
 	flowIdentifier   string // A unique identifier for the file contained in the request.
-	flowFilename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multipart posts).
+	flowFilename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multichunk posts).
 	flowRelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
 }
 
-// PartFlowData does exactly what it says on the tin, it extracts all the flow data from a request object and puts
+// ChunkFlowData does exactly what it says on the tin, it extracts all the flow data from a request object and puts
 // it into a nice little struct for you
-func PartFlowData(r *http.Request) (NgFlowData, error) {
+func ChunkFlowData(r *http.Request) (NgFlowData, error) {
 	var err error
 	ngfd := NgFlowData{}
 	ngfd.flowChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
@@ -73,21 +73,21 @@ func PartFlowData(r *http.Request) (NgFlowData, error) {
 	return ngfd, nil
 }
 
-// PartUpload is used to handle a POST from ng-flow, it will return an empty string for part upload (incomplete) and when
-// all the parts have been uploaded, it will return the path to the reconstituted file.  So, you can just keep calling it
+// ChunkUpload is used to handle a POST from ng-flow, it will return an empty string for chunk upload (incomplete) and when
+// all the chunks have been uploaded, it will return the path to the reconstituted file.  So, you can just keep calling it
 // until you get back the path to a file.
-func PartUpload(tempDir string, ngfd NgFlowData, r *http.Request) (string, error) {
+func ChunkUpload(tempDir string, ngfd NgFlowData, r *http.Request) (string, error) {
 	err := checkDirectory(tempDir)
 	if err != nil {
 		return "", err
 	}
-	fileDir, chunkFile := buildPathParts(tempDir, ngfd)
-	err = storePart(fileDir, chunkFile, ngfd, r)
+	fileDir, chunkFile := buildPathChunks(tempDir, ngfd)
+	err = storeChunk(fileDir, chunkFile, ngfd, r)
 	if err != nil {
-		return "", errors.New("Unable to store part" + err.Error())
+		return "", errors.New("Unable to store chunk" + err.Error())
 	}
-	if allPartsUploaded(tempDir, ngfd) {
-		file, err := combineParts(fileDir, ngfd)
+	if allChunksUploaded(tempDir, ngfd) {
+		file, err := combineChunks(fileDir, ngfd)
 		if err != nil {
 			return "", err
 		}
@@ -96,31 +96,31 @@ func PartUpload(tempDir string, ngfd NgFlowData, r *http.Request) (string, error
 	return "", nil
 }
 
-// PartStatus is used to handle a GET from ng-flow, it will return a (message, 200) for when it already has a part, and it
-// will return a (message, 404 | 500) when a part is incomplete or not started.
-func PartStatus(tempDir string, ngfd NgFlowData) (string, int) {
+// ChunkStatus is used to handle a GET from ng-flow, it will return a (message, 200) for when it already has a chunk, and it
+// will return a (message, 404 | 500) when a chunk is incomplete or not started.
+func ChunkStatus(tempDir string, ngfd NgFlowData) (string, int) {
 	err := checkDirectory(tempDir)
 	if err != nil {
 		return "Directory is broken: " + err.Error(), 500
 	}
-	_, chunkFile := buildPathParts(tempDir, ngfd)
+	_, chunkFile := buildPathChunks(tempDir, ngfd)
 	flowChunkNumberString := strconv.Itoa(ngfd.flowChunkNumber)
 	dat, err := ioutil.ReadFile(chunkFile)
 	if err != nil {
-		return "The part " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
+		return "The chunk " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
 	}
 	// An exception for large last chunks, according to ng-flow the last chunk can be anywhere less
 	// than 2x the chunk size unless you haave forceChunkSize on... seems like idiocy to me, but alright.
 	if ngfd.flowChunkNumber != ngfd.flowTotalChunks && ngfd.flowChunkSize != len(dat) {
-		return "The part " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 500
+		return "The chunk " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 500
 	}
 
-	return "The part " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
+	return "The chunk " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
 }
 
-// PartsCleanup is used to go through the tempDir and remove any parts and directories older than
+// ChunksCleanup is used to go through the tempDir and remove any chunks and directories older than
 // than the timeoutDur, best to set this VERY conservatively.
-func PartsCleanup(tempDir string, timeoutDur time.Duration) error {
+func ChunksCleanup(tempDir string, timeoutDur time.Duration) error {
 	files, err := ioutil.ReadDir(tempDir)
 	if err != nil {
 		return err
@@ -144,16 +144,16 @@ func PartsCleanup(tempDir string, timeoutDur time.Duration) error {
 	return nil
 }
 
-// buildPathParts simply builds the paths to the ID of the upload, and to the specific Chunk
-func buildPathParts(tempDir string, ngfd NgFlowData) (string, string) {
+// buildPathChunks simply builds the paths to the ID of the upload, and to the specific Chunk
+func buildPathChunks(tempDir string, ngfd NgFlowData) (string, string) {
 	filePath := path.Join(tempDir, ngfd.flowIdentifier)
 	chunkFile := path.Join(filePath, strconv.Itoa(ngfd.flowChunkNumber))
 	return filePath, chunkFile
 }
 
-// combineParts will take the chunks uploaded, and combined them into a single file with the
-// name as uploaded from the NgFlowData, and it will clean up the parts as it goes.
-func combineParts(fileDir string, ngfd NgFlowData) (string, error) {
+// combineChunks will take the chunks uploaded, and combined them into a single file with the
+// name as uploaded from the NgFlowData, and it will clean up the chunks as it goes.
+func combineChunks(fileDir string, ngfd NgFlowData) (string, error) {
 	combinedName := path.Join(fileDir, ngfd.flowFilename)
 	cn, err := os.Create(combinedName)
 	if err != nil {
@@ -185,16 +185,16 @@ func combineParts(fileDir string, ngfd NgFlowData) (string, error) {
 	return combinedName, nil
 }
 
-// allPartsUploaded checks if the file is completely uploaded (based on total size)
-func allPartsUploaded(tempDir string, ngfd NgFlowData) bool {
-	partsPath := path.Join(tempDir, ngfd.flowIdentifier)
-	files, err := ioutil.ReadDir(partsPath)
+// allChunksUploaded checks if the file is completely uploaded (based on total size)
+func allChunksUploaded(tempDir string, ngfd NgFlowData) bool {
+	chunksPath := path.Join(tempDir, ngfd.flowIdentifier)
+	files, err := ioutil.ReadDir(chunksPath)
 	if err != nil {
 		log.Println(err)
 	}
 	totalSize := int64(0)
 	for _, f := range files {
-		fi, err := os.Stat(path.Join(partsPath, f.Name()))
+		fi, err := os.Stat(path.Join(chunksPath, f.Name()))
 		if err != nil {
 			log.Println(err)
 		}
@@ -206,8 +206,8 @@ func allPartsUploaded(tempDir string, ngfd NgFlowData) bool {
 	return false
 }
 
-// storePart puts the part in the request into the right place on disk
-func storePart(tempDir string, tempFile string, ngfd NgFlowData, r *http.Request) error {
+// storeChunk puts the chunk in the request into the right place on disk
+func storeChunk(tempDir string, tempFile string, ngfd NgFlowData, r *http.Request) error {
 	err := os.MkdirAll(tempDir, DefaultDirPermissions)
 	if err != nil {
 		return errors.New("Bad directory")
@@ -242,14 +242,14 @@ func checkDirectory(d string) error {
 	}
 
 	testName := "5d58061677944334bb616ba19cec5cc4"
-	testPart := "42"
+	testChunk := "42"
 	contentName := "foobie"
 	testContent := `For instance, on the planet Earth, man had always assumed that he was more intelligent than 
 	dolphins because he had achieved so much—the wheel, New York, wars and so on—whilst all the dolphins had 
 	ever done was muck about in the water having a good time. But conversely, the dolphins had always believed 
 	that they were far more intelligent than man—for precisely the same reasons.`
 
-	p := path.Join(d, testName, testPart)
+	p := path.Join(d, testName, testChunk)
 	err := os.MkdirAll(p, DefaultDirPermissions)
 	if err != nil {
 		lastCheckedDirectoryError = ErrCantCreateDir
