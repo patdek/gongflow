@@ -28,13 +28,13 @@ var (
 // NgFlowData is all the data listed in the "How do I set it up with my server?" section of the ng-flow
 // README.md https://github.com/flowjs/flow.js/blob/master/README.md
 type NgFlowData struct {
-	flowChunkNumber  int    // The index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
-	flowTotalChunks  int    // The total number of chunks.
-	flowChunkSize    int    // The general chunk size. Using this value and flowTotalSize you can calculate the total number of chunks. The "final chunk" can be anything less than 2x chunk size.
-	flowTotalSize    int    // The total file size.
-	flowIdentifier   string // A unique identifier for the file contained in the request.
-	flowFilename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multichunk posts).
-	flowRelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
+	ChunkNumber  int    // The index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
+	TotalChunks  int    // The total number of chunks.
+	ChunkSize    int    // The general chunk size. Using this value and TotalSize you can calculate the total number of chunks. The "final chunk" can be anything less than 2x chunk size.
+	TotalSize    int    // The total file size.
+	Identifier   string // A unique identifier for the file contained in the request.
+	Filename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multichunk posts).
+	RelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
 
 }
 
@@ -43,33 +43,33 @@ type NgFlowData struct {
 func ChunkFlowData(r *http.Request) (NgFlowData, error) {
 	var err error
 	ngfd := NgFlowData{}
-	ngfd.flowChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
+	ngfd.ChunkNumber, err = strconv.Atoi(r.FormValue("ChunkNumber"))
 	if err != nil {
-		return ngfd, errors.New("Bad flowChunkNumber")
+		return ngfd, errors.New("Bad ChunkNumber")
 	}
-	ngfd.flowTotalChunks, err = strconv.Atoi(r.FormValue("flowTotalChunks"))
+	ngfd.TotalChunks, err = strconv.Atoi(r.FormValue("TotalChunks"))
 	if err != nil {
-		return ngfd, errors.New("Bad flowTotalChunks")
+		return ngfd, errors.New("Bad TotalChunks")
 	}
-	ngfd.flowChunkSize, err = strconv.Atoi(r.FormValue("flowChunkSize"))
+	ngfd.ChunkSize, err = strconv.Atoi(r.FormValue("ChunkSize"))
 	if err != nil {
-		return ngfd, errors.New("Bad flowChunkSize")
+		return ngfd, errors.New("Bad ChunkSize")
 	}
-	ngfd.flowTotalSize, err = strconv.Atoi(r.FormValue("flowTotalSize"))
+	ngfd.TotalSize, err = strconv.Atoi(r.FormValue("TotalSize"))
 	if err != nil {
-		return ngfd, errors.New("Bad flowTotalSize")
+		return ngfd, errors.New("Bad TotalSize")
 	}
-	ngfd.flowIdentifier = r.FormValue("flowIdentifier")
-	if ngfd.flowIdentifier == "" {
-		return ngfd, errors.New("Bad flowIdentifier")
+	ngfd.Identifier = r.FormValue("Identifier")
+	if ngfd.Identifier == "" {
+		return ngfd, errors.New("Bad Identifier")
 	}
-	ngfd.flowFilename = r.FormValue("flowFilename")
-	if ngfd.flowFilename == "" {
-		return ngfd, errors.New("Bad flowFilename")
+	ngfd.Filename = r.FormValue("Filename")
+	if ngfd.Filename == "" {
+		return ngfd, errors.New("Bad Filename")
 	}
-	ngfd.flowRelativePath = r.FormValue("flowRelativePath")
-	if ngfd.flowRelativePath == "" {
-		return ngfd, errors.New("Bad flowRelativePath")
+	ngfd.RelativePath = r.FormValue("RelativePath")
+	if ngfd.RelativePath == "" {
+		return ngfd, errors.New("Bad RelativePath")
 	}
 	return ngfd, nil
 }
@@ -105,18 +105,18 @@ func ChunkStatus(tempDir string, ngfd NgFlowData) (string, int) {
 		return "Directory is broken: " + err.Error(), 500
 	}
 	_, chunkFile := buildPathChunks(tempDir, ngfd)
-	flowChunkNumberString := strconv.Itoa(ngfd.flowChunkNumber)
+	ChunkNumberString := strconv.Itoa(ngfd.ChunkNumber)
 	dat, err := ioutil.ReadFile(chunkFile)
 	if err != nil {
-		return "The chunk " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " isn't started yet!", 404
+		return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " isn't started yet!", 404
 	}
 	// An exception for large last chunks, according to ng-flow the last chunk can be anywhere less
 	// than 2x the chunk size unless you haave forceChunkSize on... seems like idiocy to me, but alright.
-	if ngfd.flowChunkNumber != ngfd.flowTotalChunks && ngfd.flowChunkSize != len(dat) {
-		return "The chunk " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " is the wrong size!", 500
+	if ngfd.ChunkNumber != ngfd.TotalChunks && ngfd.ChunkSize != len(dat) {
+		return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " is the wrong size!", 500
 	}
 
-	return "The chunk " + ngfd.flowIdentifier + ":" + flowChunkNumberString + " looks great!", 200
+	return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " looks great!", 200
 }
 
 // ChunksCleanup is used to go through the tempDir and remove any chunks and directories older than
@@ -147,15 +147,15 @@ func ChunksCleanup(tempDir string, timeoutDur time.Duration) error {
 
 // buildPathChunks simply builds the paths to the ID of the upload, and to the specific Chunk
 func buildPathChunks(tempDir string, ngfd NgFlowData) (string, string) {
-	filePath := path.Join(tempDir, ngfd.flowIdentifier)
-	chunkFile := path.Join(filePath, strconv.Itoa(ngfd.flowChunkNumber))
+	filePath := path.Join(tempDir, ngfd.Identifier)
+	chunkFile := path.Join(filePath, strconv.Itoa(ngfd.ChunkNumber))
 	return filePath, chunkFile
 }
 
 // combineChunks will take the chunks uploaded, and combined them into a single file with the
 // name as uploaded from the NgFlowData, and it will clean up the chunks as it goes.
 func combineChunks(fileDir string, ngfd NgFlowData) (string, error) {
-	combinedName := path.Join(fileDir, ngfd.flowFilename)
+	combinedName := path.Join(fileDir, ngfd.Filename)
 	cn, err := os.Create(combinedName)
 	if err != nil {
 		return "", err
@@ -188,7 +188,7 @@ func combineChunks(fileDir string, ngfd NgFlowData) (string, error) {
 
 // allChunksUploaded checks if the file is completely uploaded (based on total size)
 func allChunksUploaded(tempDir string, ngfd NgFlowData) bool {
-	chunksPath := path.Join(tempDir, ngfd.flowIdentifier)
+	chunksPath := path.Join(tempDir, ngfd.Identifier)
 	files, err := ioutil.ReadDir(chunksPath)
 	if err != nil {
 		log.Println(err)
@@ -201,7 +201,7 @@ func allChunksUploaded(tempDir string, ngfd NgFlowData) bool {
 		}
 		totalSize += fi.Size()
 	}
-	if totalSize == int64(ngfd.flowTotalSize) {
+	if totalSize == int64(ngfd.TotalSize) {
 		return true
 	}
 	return false
