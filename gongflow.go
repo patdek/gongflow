@@ -14,28 +14,41 @@ import (
 )
 
 var (
-	DefaultDirPermissions     os.FileMode = 0777
-	DefaultFilePermissions    os.FileMode = 0777
-	ErrNoTempDir                          = errors.New("gongflow: the temporary directory doesn't exist")
-	ErrCantCreateDir                      = errors.New("gongflow: can't create a directory under the temp directory")
-	ErrCantWriteFile                      = errors.New("gongflow: can't write to a file under the temp directory")
-	ErrCantReadFile                       = errors.New("gongflow: can't read a file under the temp directory (or got back bad data)")
-	ErrCantDelete                         = errors.New("gongflow: can't delete a file/directory under the temp directory")
-	alreadyCheckedDirectory               = false
-	lastCheckedDirectoryError error       = nil
+	// DefaultDirPermissions is the default permissions for directories created by gongflow
+	DefaultDirPermissions os.FileMode = 0777
+	// DefaultFilePermissions is the default permissions for directories created by gongflow
+	DefaultFilePermissions os.FileMode = 0777
+	// ErrNoTempDir is returned when the temp directory doesn't exist
+	ErrNoTempDir = errors.New("gongflow: the temporary directory doesn't exist")
+	// ErrCantCreateDir is returned wwhen the temporary directory doesn't exist
+	ErrCantCreateDir = errors.New("gongflow: can't create a directory under the temp directory")
+	// ErrCantWriteFile is returned when it can't create a directory under the temp directory
+	ErrCantWriteFile = errors.New("gongflow: can't write to a file under the temp directory")
+	// ErrCantReadFile is returned when it can't read a file under the temp directory (or got back bad data)
+	ErrCantReadFile = errors.New("gongflow: can't read a file under the temp directory (or got back bad data)")
+	// ErrCantDelete is return when it can't delete a file/directory under the temp directory
+	ErrCantDelete                   = errors.New("gongflow: can't delete a file/directory under the temp directory")
+	alreadyCheckedDirectory         = false
+	lastCheckedDirectoryError error // = nil
 )
 
 // NgFlowData is all the data listed in the "How do I set it up with my server?" section of the ng-flow
 // README.md https://github.com/flowjs/flow.js/blob/master/README.md
 type NgFlowData struct {
-	ChunkNumber  int    // The index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
-	TotalChunks  int    // The total number of chunks.
-	ChunkSize    int    // The general chunk size. Using this value and TotalSize you can calculate the total number of chunks. The "final chunk" can be anything less than 2x chunk size.
-	TotalSize    int    // The total file size.
-	Identifier   string // A unique identifier for the file contained in the request.
-	Filename     string // The original file name (since a bug in Firefox results in the file name not being transmitted in chunk multichunk posts).
-	RelativePath string // The file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
-
+	// ChunkNumber is the index of the chunk in the current upload. First chunk is 1 (no base-0 counting here).
+	ChunkNumber int
+	// TotalChunks is the total number of chunks.
+	TotalChunks int
+	// ChunkSize is the general chunk size. Using this value and TotalSize you can calculate the total number of chunks. The "final chunk" can be anything less than 2x chunk size.
+	ChunkSize int
+	// TotalSize is the total file size.
+	TotalSize int
+	// TotalSize is a unique identifier for the file contained in the request.
+	Identifier string
+	// Filename is the original file name (since a bug in Firefox results in the file name not being transmitted in chunk multichunk posts).
+	Filename string
+	// RelativePath is the file's relative path when selecting a directory (defaults to file name in all browsers except Chrome)
+	RelativePath string
 }
 
 // ChunkFlowData does exactly what it says on the tin, it extracts all the flow data from a request object and puts
@@ -43,31 +56,31 @@ type NgFlowData struct {
 func ChunkFlowData(r *http.Request) (NgFlowData, error) {
 	var err error
 	ngfd := NgFlowData{}
-	ngfd.ChunkNumber, err = strconv.Atoi(r.FormValue("ChunkNumber"))
+	ngfd.ChunkNumber, err = strconv.Atoi(r.FormValue("flowChunkNumber"))
 	if err != nil {
 		return ngfd, errors.New("Bad ChunkNumber")
 	}
-	ngfd.TotalChunks, err = strconv.Atoi(r.FormValue("TotalChunks"))
+	ngfd.TotalChunks, err = strconv.Atoi(r.FormValue("flowTotalChunks"))
 	if err != nil {
 		return ngfd, errors.New("Bad TotalChunks")
 	}
-	ngfd.ChunkSize, err = strconv.Atoi(r.FormValue("ChunkSize"))
+	ngfd.ChunkSize, err = strconv.Atoi(r.FormValue("flowChunkSize"))
 	if err != nil {
 		return ngfd, errors.New("Bad ChunkSize")
 	}
-	ngfd.TotalSize, err = strconv.Atoi(r.FormValue("TotalSize"))
+	ngfd.TotalSize, err = strconv.Atoi(r.FormValue("flowTotalSize"))
 	if err != nil {
 		return ngfd, errors.New("Bad TotalSize")
 	}
-	ngfd.Identifier = r.FormValue("Identifier")
+	ngfd.Identifier = r.FormValue("flowIdentifier")
 	if ngfd.Identifier == "" {
 		return ngfd, errors.New("Bad Identifier")
 	}
-	ngfd.Filename = r.FormValue("Filename")
+	ngfd.Filename = r.FormValue("flowFilename")
 	if ngfd.Filename == "" {
 		return ngfd, errors.New("Bad Filename")
 	}
-	ngfd.RelativePath = r.FormValue("RelativePath")
+	ngfd.RelativePath = r.FormValue("flowRelativePath")
 	if ngfd.RelativePath == "" {
 		return ngfd, errors.New("Bad RelativePath")
 	}
@@ -160,7 +173,6 @@ func combineChunks(fileDir string, ngfd NgFlowData) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer cn.Close()
 
 	files, err := ioutil.ReadDir(fileDir)
 	if err != nil {
@@ -182,6 +194,11 @@ func combineChunks(fileDir string, ngfd NgFlowData) (string, error) {
 				return "", err
 			}
 		}
+	}
+
+	err = cn.Close()
+	if err != nil {
+		return "", err
 	}
 	return combinedName, nil
 }
